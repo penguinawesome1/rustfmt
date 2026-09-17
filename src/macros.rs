@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use rustc_ast::ast;
-use rustc_ast::token::{Delimiter, Token, TokenKind};
+use rustc_ast::token::{Delimiter, LitKind, Token, TokenKind};
 use rustc_ast::tokenstream::{TokenStream, TokenStreamIter, TokenTree};
 use rustc_ast_pretty::pprust;
 use rustc_span::{BytePos, DUMMY_SP, Ident, Pos, Span, Symbol};
@@ -303,6 +303,24 @@ fn rewrite_macro_inner(
             if vec_with_semi {
                 handle_vec_semi(context, shape, arg_vec, macro_name, style, mac.span())
             } else {
+                if context.config.style_edition() >= StyleEdition::Edition2027 {
+                    // Handle special case for exactly one argument that is a string literal
+                    // with a newline as the first character. See issue #5029.
+                    if let [MacroArg::Expr(expr)] = &arg_vec[..] {
+                        if let ast::ExprKind::Lit(token_lit) = expr.kind {
+                            if token_lit.kind == LitKind::Str
+                                && token_lit.symbol.as_str().starts_with('\n')
+                            {
+                                let rw = format!("{}(\"{}\")", macro_name, token_lit.symbol);
+                                return match position {
+                                    MacroPosition::Item => Ok(format!("{};", rw)),
+                                    _ => Ok(rw),
+                                };
+                            }
+                        }
+                    }
+                }
+
                 // Format macro invocation as function call, preserve the trailing
                 // comma because not all macros support them.
                 overflow::rewrite_with_parens(
